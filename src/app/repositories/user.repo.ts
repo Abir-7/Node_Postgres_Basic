@@ -1,7 +1,7 @@
 import { Users } from "./../db/schema/user/user.schema";
 
 import { NodePgQueryResultHKT } from "./../../../node_modules/drizzle-orm/node-postgres/session.d";
-import { desc, eq } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import { db } from "../db";
 
 import { UserProfiles } from "../db/schema/user/user_profiles.schema";
@@ -75,16 +75,21 @@ const createAuthentication = async (
     .returning();
   return auth;
 };
-const getAuthenticationByUserId = async (user_id: string) => {
+const getAuthenticationByUserIdAndCode = async (
+  user_id: string,
+  code: string
+) => {
   const auth = await db.query.UserAuthentications.findFirst({
-    where: eq(UserAuthentications.user_id, user_id),
-    orderBy: [desc(UserAuthentications.created_at)],
+    where: and(
+      eq(UserAuthentications.user_id, user_id),
+      eq(UserAuthentications.otp, code)
+    ),
   });
 
   return auth || null;
 };
 
-export const UserRepository = {
+export const AuthRepository = {
   createUser,
   findByEmail,
   findById,
@@ -93,5 +98,5 @@ export const UserRepository = {
   deleteUser,
   createProfile,
   createAuthentication,
-  getAuthenticationByUserId,
+  getAuthenticationByUserIdAndCode,
 };
