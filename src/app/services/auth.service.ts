@@ -85,13 +85,14 @@ const verifyUser = async (user_id: string, code: string) => {
   if (!getAuthenticationData) {
     throw new AppError("Code not matched. Try again.", 404);
   }
-
+  console.log(getAuthenticationData.expire_time);
+  console.log(isExpired(getAuthenticationData.expire_time));
   if (isExpired(getAuthenticationData.expire_time)) {
     throw new AppError("Time expired. Try resend code.", 400);
   }
-
+  // ! need to use transection
   await AuthRepository.updateUser(user_id, { is_verified: true });
-
+  await AuthRepository.setAuthenticationSuccess(getAuthenticationData.id, true);
   return { message: "User successfully verified." };
 };
 

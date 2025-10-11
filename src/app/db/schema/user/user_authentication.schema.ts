@@ -9,6 +9,7 @@ import {
 import { relations } from "drizzle-orm";
 import { Users } from "./user.schema";
 import { timestamps } from "../../helper/columns.helpers";
+import { boolean } from "drizzle-orm/pg-core";
 
 // user_authentications table
 export const UserAuthentications = pgTable("user_authentications", {
@@ -19,7 +20,7 @@ export const UserAuthentications = pgTable("user_authentications", {
   otp: varchar("otp", { length: 10 }).notNull(),
   token: text("token"),
   expire_time: timestamp("expire_date").notNull(),
-
+  is_success: boolean("is_success").notNull().default(false),
   ...timestamps,
 });
 

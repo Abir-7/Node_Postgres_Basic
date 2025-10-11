@@ -88,6 +88,12 @@ const getAuthenticationByUserIdAndCode = async (
 
   return auth || null;
 };
+const setAuthenticationSuccess = async (authId: string, value = true) => {
+  await db
+    .update(UserAuthentications)
+    .set({ is_success: value })
+    .where(eq(UserAuthentications.id, authId));
+};
 
 export const AuthRepository = {
   createUser,
@@ -99,4 +105,5 @@ export const AuthRepository = {
   createProfile,
   createAuthentication,
   getAuthenticationByUserIdAndCode,
+  setAuthenticationSuccess,
 };
