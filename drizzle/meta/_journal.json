@@ -15,6 +15,20 @@
       "when": 1760182709209,
       "tag": "0001_strange_sasquatch",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1760249360180,
+      "tag": "0002_rich_vampiro",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1760262363384,
+      "tag": "0003_watery_diamondback",
+      "breakpoints": true
     }
   ]
 }

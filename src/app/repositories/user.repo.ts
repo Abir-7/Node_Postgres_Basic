@@ -1,23 +1,7 @@
-import { Users } from "./../db/schema/user/user.schema";
-
-import { NodePgQueryResultHKT } from "./../../../node_modules/drizzle-orm/node-postgres/session.d";
-import { and, desc, eq } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { db } from "../db";
-
-import { UserProfiles } from "../db/schema/user/user_profiles.schema";
-import { UserAuthentications } from "../db/schema/user/user_authentication.schema";
-import { PgTransaction } from "drizzle-orm/pg-core";
-import { ExtractTablesWithRelations } from "drizzle-orm";
-import { asc } from "drizzle-orm";
+import { Users } from "../db/schema/user/user.schema";
 import { DatabaseTransaction } from "./helper.repo";
-
-const createUser = async (
-  data: typeof Users.$inferInsert,
-  trx?: DatabaseTransaction
-) => {
-  const [user] = await (trx || db).insert(Users).values(data).returning();
-  return user;
-};
 
 const findByEmail = async (email: string) => {
   const [user] = await db.select().from(Users).where(eq(Users.email, email));
@@ -35,9 +19,10 @@ const getAllUsers = async () => {
 
 const updateUser = async (
   id: string,
-  data: Partial<typeof Users.$inferInsert>
+  data: Partial<typeof Users.$inferInsert>,
+  trx?: DatabaseTransaction
 ) => {
-  const [user] = await db
+  const [user] = await (trx || db)
     .update(Users)
     .set(data)
     .where(eq(Users.id, id))
@@ -50,60 +35,10 @@ const deleteUser = async (id: string) => {
   return true;
 };
 
-//-----------PROFILE
-
-const createProfile = async (
-  data: typeof UserProfiles.$inferInsert,
-  trx?: DatabaseTransaction
-) => {
-  const [profile] = await (trx || db)
-    .insert(UserProfiles)
-    .values(data)
-    .returning();
-  return profile;
-};
-
-//---------Authentication
-
-const createAuthentication = async (
-  data: typeof UserAuthentications.$inferInsert,
-  trx?: DatabaseTransaction
-) => {
-  const [auth] = await (trx || db)
-    .insert(UserAuthentications)
-    .values(data)
-    .returning();
-  return auth;
-};
-const getAuthenticationByUserIdAndCode = async (
-  user_id: string,
-  code: string
-) => {
-  const auth = await db.query.UserAuthentications.findFirst({
-    where: and(
-      eq(UserAuthentications.user_id, user_id),
-      eq(UserAuthentications.otp, code)
-    ),
-  });
-
-  return auth || null;
-};
-const setAuthenticationSuccess = async (authId: string, value = true) => {
-  await db
-    .update(UserAuthentications)
-    .set({ is_success: value })
-    .where(eq(UserAuthentications.id, authId));
-};
-
-export const AuthRepository = {
-  createUser,
+export const UserRepository = {
   findByEmail,
   findById,
   getAllUsers,
   updateUser,
   deleteUser,
-  createProfile,
-  createAuthentication,
-  getAuthenticationByUserIdAndCode,
-  setAuthenticationSuccess,
 };

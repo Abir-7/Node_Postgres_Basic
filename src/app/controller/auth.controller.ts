@@ -40,4 +40,26 @@ const verifyUser = catchAsync(async (req: Request, res: Response) => {
   });
 });
 
-export const AuthController = { createUser, verifyUser };
+const userLogin = catchAsync(async (req: Request, res: Response) => {
+  const createdUser = await AuthService.userLogin(req.body);
+
+  sendResponse(res, {
+    success: true,
+    message: "User successfully login.",
+    status_code: 200,
+    data: createdUser,
+  });
+});
+
+const resendCode = catchAsync(async (req: Request, res: Response) => {
+  const createdUser = await AuthService.resendCode(req.body.user_id);
+
+  sendResponse(res, {
+    success: true,
+    message: "Code successfully resend.",
+    status_code: 200,
+    data: createdUser,
+  });
+});
+
+export const AuthController = { createUser, verifyUser, userLogin, resendCode };

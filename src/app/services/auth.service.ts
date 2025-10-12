@@ -1,13 +1,25 @@
-import { AuthRepository } from "../repositories/user.repo";
+import { decode } from "./../../../node_modules/zod/src/v4/classic/parse";
+import { AuthRepository } from "../repositories/auth.repo";
 import { AppError } from "../utils/serverTools/AppError";
 import getHashedPassword from "../utils/helper/getHashedPassword";
 
 import { Repository } from "../repositories/helper.repo";
-import { TUserRole } from "../middleware/auth/auth.interface";
+import {
+  IAuthData,
+  IDecodedData,
+  TUserRole,
+} from "../middleware/auth/auth.interface";
 import getOtp from "../utils/helper/getOtp";
 import getExpiryTime from "../utils/helper/getExpiryTime";
 import { publishJob } from "../lib/rabbitMq/publisher";
 import isExpired from "../utils/helper/isExpired";
+import { UserRepository } from "../repositories/user.repo";
+import { logger } from "../utils/serverTools/logger";
+import { validateUserStatus } from "../utils/helper/validateUserStatus";
+import { comparePassword } from "../utils/helper/comparePassword";
+import { jsonWebToken } from "../utils/jwt/jwt";
+import { appConfig } from "../config/appConfig";
+import { getRemainingMinutes } from "../utils/helper/getRemainingMitutes";
 
 const registerUser = async (
   userData: { email: string; password: string; role?: TUserRole },
@@ -23,13 +35,18 @@ const registerUser = async (
   const { email, password, role = "user" } = userData;
 
   // Check if user already exists
-  const existing = await AuthRepository.findByEmail(email);
+  const existing = await UserRepository.findByEmail(email);
   if (existing && existing.is_verified) {
     throw new Error("User already exists with this email.");
   }
 
-  if (existing && (!existing.is_verified || existing.is_deleted)) {
-    AuthRepository.deleteUser(existing.id);
+  if (
+    existing &&
+    (!existing.is_verified ||
+      existing.status === "deleted" ||
+      existing.status === "pending_verification")
+  ) {
+    UserRepository.deleteUser(existing.id);
   }
 
   const password_hash = await getHashedPassword(password);
@@ -39,7 +56,13 @@ const registerUser = async (
   try {
     const { user } = await Repository.transaction(async (trx) => {
       const user = await AuthRepository.createUser(
-        { email, password_hash, role, is_verified: false },
+        {
+          email,
+          password_hash,
+          role,
+          is_verified: false,
+          status: "pending_verification",
+        },
         trx
       );
 
@@ -53,16 +76,17 @@ const registerUser = async (
           user_id: user.id,
           otp,
           expire_time,
+          verification_type: "email",
         },
         trx
       );
 
       await publishJob("emailQueue", {
         to: user.email,
-        subject: "Veerification",
+        subject: "Verification",
         code: otp,
         project_name: "Home Cache",
-        expire_time: "24h",
+        expire_time: "10 min",
         purpose: "Verify your email",
       });
 
@@ -85,19 +109,298 @@ const verifyUser = async (user_id: string, code: string) => {
   if (!getAuthenticationData) {
     throw new AppError("Code not matched. Try again.", 404);
   }
-  console.log(getAuthenticationData.expire_time);
-  console.log(isExpired(getAuthenticationData.expire_time));
+
+  if (getAuthenticationData.is_success) {
+    throw new AppError("You already use this code successfully.", 400);
+  }
+
   if (isExpired(getAuthenticationData.expire_time)) {
     throw new AppError("Time expired. Try resend code.", 400);
   }
-  // ! need to use transection
-  await AuthRepository.updateUser(user_id, { is_verified: true });
-  await AuthRepository.setAuthenticationSuccess(getAuthenticationData.id, true);
-  return { message: "User successfully verified." };
+
+  try {
+    await Repository.transaction(async (trx) => {
+      const updated_data = await UserRepository.updateUser(
+        user_id,
+        { is_verified: true, status: "active" },
+        trx
+      );
+
+      if (!updated_data.is_verified) {
+        throw new AppError("Failed to verify user. Try again.", 400);
+      }
+
+      const updated_auth = await AuthRepository.setAuthenticationSuccess(
+        getAuthenticationData.id,
+        true,
+        trx
+      );
+
+      if (!updated_auth.is_success) {
+        throw new AppError("Failed to verify user. Try again.", 400);
+      }
+    });
+
+    return { message: "User successfully verified." };
+  } catch (error) {
+    throw error;
+  }
+};
+
+const userLogin = async (data: {
+  email: string;
+  password: string;
+  role: TUserRole;
+}) => {
+  if (!data.role) {
+    logger.info("No action take for role. Role has no value");
+  }
+
+  const user_data = await UserRepository.findByEmail(data.email);
+
+  if (!user_data) {
+    throw new AppError("Account not found. Please check your email", 404);
+  }
+  if (!user_data.is_verified) {
+    throw new AppError("Account is not verified.", 400);
+  }
+  if (user_data.role !== data.role) {
+    logger.info("No action take for mismatch. role not matched");
+  }
+  validateUserStatus(user_data.status);
+  await comparePassword(data.password, user_data.password_hash);
+
+  const jwt_payload = {
+    user_email: user_data.email,
+    user_id: user_data.id,
+    user_role: user_data.role,
+  } as IAuthData;
+
+  const access_toekn = jsonWebToken.generateToken(
+    jwt_payload,
+    appConfig.jwt.jwt_access_secret as string,
+    appConfig.jwt.jwt_access_exprire
+  );
+  const refress_token = jsonWebToken.generateToken(
+    jwt_payload,
+    appConfig.jwt.jwt_refresh_secret as string,
+    appConfig.jwt.jwt_refresh_exprire
+  );
+  const decoded_access_token = jsonWebToken.decodeToken(access_toekn);
+  const decoded_refresh_token = jsonWebToken.decodeToken(refress_token);
+  return {
+    access_toekn,
+    refress_token,
+    user_id: user_data.id,
+    access_token_expire: decoded_access_token.exp,
+    refresh_token_expire: decoded_refresh_token.exp,
+  };
+};
+
+const resendCode = async (user_id: string) => {
+  const user_data = await UserRepository.findById(user_id);
+
+  if (!user_data) {
+    throw new AppError("Account not found.", 404);
+  }
+
+  const latest_auth = await AuthRepository.getAuthenticationByUserId(user_id);
+
+  if (latest_auth && !isExpired(latest_auth.expire_time)) {
+    const remain = getRemainingMinutes(latest_auth.expire_time);
+    throw new AppError(
+      `You can request for code again after ${remain} minutes`,
+      404
+    );
+  }
+
+  const code = String(getOtp(4));
+  const expire_time = getExpiryTime(10);
+
+  await AuthRepository.createAuthentication({
+    otp: code,
+    expire_time,
+    user_id,
+    is_success: false,
+    verification_type: "resend",
+  });
+
+  await publishJob("emailQueue", {
+    to: user_data.email,
+    subject: "Resend",
+    code: code,
+    project_name: "Home Cache",
+    expire_time: "10 min",
+    purpose: "verify",
+  });
+};
+
+const forgotPassword = async (user_email: string) => {
+  const user_data = await UserRepository.findByEmail(user_email);
+
+  if (!user_data) {
+    throw new AppError("Account not found.", 404);
+  }
+
+  const code = String(getOtp(4));
+  const expire_time = getExpiryTime(10);
+
+  await AuthRepository.createAuthentication({
+    otp: code,
+    expire_time,
+    user_id: user_data.id,
+    is_success: false,
+    verification_type: "forgot-password",
+  });
+
+  await publishJob("emailQueue", {
+    to: user_data.email,
+    subject: "Forgot Password",
+    code: code,
+    project_name: "Home Cache",
+    expire_time: "10 min",
+    purpose: "verify",
+  });
+  return { message: "A code has been sent to your email." };
+};
+
+const verifyForgotPasswordReq = async (user_id: string, code: string) => {
+  const user_data = await UserRepository.findById(user_id);
+
+  if (!user_data) {
+    throw new AppError("Account not found.", 404);
+  }
+
+  const getAuthenticationData =
+    await AuthRepository.getAuthenticationByUserIdAndCode(user_id, code);
+
+  if (!getAuthenticationData) {
+    throw new AppError("Code not matched. Try again.", 404);
+  }
+
+  if (getAuthenticationData.is_success) {
+    throw new AppError("You already use this code successfully.", 400);
+  }
+
+  if (isExpired(getAuthenticationData.expire_time)) {
+    throw new AppError("Time expired. Try resend code.", 400);
+  }
+
+  const expire_time = getExpiryTime(10);
+
+  const jwt_payload = {
+    user_email: user_data.email,
+    user_id: user_data.id,
+    user_role: user_data.role,
+  } as IAuthData;
+
+  const access_toekn = jsonWebToken.generateToken(
+    jwt_payload,
+    appConfig.jwt.jwt_access_secret as string,
+    appConfig.jwt.jwt_access_exprire
+  );
+
+  try {
+    await Repository.transaction(async (trx) => {
+      const updated_data = await UserRepository.updateUser(
+        user_id,
+        { need_to_reset_password: true },
+        trx
+      );
+
+      if (!updated_data.need_to_reset_password) {
+        throw new AppError(
+          "Failed to verify password reset request. Try again.",
+          400
+        );
+      }
+
+      const updated_auth = await AuthRepository.setAuthenticationSuccess(
+        getAuthenticationData.id,
+        true,
+        trx
+      );
+
+      if (!updated_auth.is_success) {
+        throw new AppError(
+          "Failed to verify password reset request. Try again.",
+          400
+        );
+      }
+
+      await AuthRepository.createAuthentication({
+        expire_time,
+        user_id: user_id,
+        is_success: false,
+        token: access_toekn,
+        verification_type: "token",
+      });
+    });
+
+    return { token: access_toekn };
+  } catch (error) {
+    throw error;
+  }
+};
+
+const resetPassword = async (
+  token: string,
+  password_data: {
+    password: string;
+    confirm_password: string;
+  }
+) => {
+  let decoded_data: IDecodedData;
+  try {
+    decoded_data = jsonWebToken.decodeToken(token);
+  } catch (error) {
+    throw new AppError("Failed to update password.", 500);
+  }
+
+  if (decoded_data && !decoded_data.user_id) {
+    throw new AppError("Failed to update password.", 500);
+  }
+
+  const user_data = await UserRepository.findById(decoded_data.user_id);
+
+  const user_auth_data = await AuthRepository.getAuthenticationByUserIdAndToken(
+    decoded_data.user_id,
+    token
+  );
+
+  if (!user_data) {
+    throw new AppError("Failed to update password.", 500);
+  }
+  if (!user_data.need_to_reset_password) {
+    throw new AppError("Failed to update password.", 500);
+  }
+
+  if (!user_auth_data) {
+    throw new AppError("Failed to update password.", 500);
+  }
+
+  if (password_data.confirm_password !== password_data.password) {
+    throw new AppError("Password and Confirm password not matched", 500);
+  }
+  try {
+    await Repository.transaction(async (trx) => {
+      await AuthRepository.setAuthenticationSuccess(user_auth_data.id, true);
+      await UserRepository.updateUser(user_data.id, {
+        need_to_reset_password: false,
+      });
+      return { message: "Password reset successfully." };
+    });
+  } catch (error) {
+    throw new AppError("Failed to update password.", 400);
+  }
 };
 
 export const AuthService = {
   registerUser,
   verifyUser,
-  // other existing functions...
+  userLogin,
+  resendCode,
+  forgotPassword,
+  verifyForgotPasswordReq,
+  resetPassword,
 };

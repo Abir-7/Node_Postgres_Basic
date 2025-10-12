@@ -13,3 +13,12 @@ export interface IDecodedData extends IAuthData {
 export const user_roles = ["super_admin", "user"] as const;
 
 export type TUserRole = (typeof user_roles)[number];
+
+export const user_status = [
+  "active",
+  "pending_verification",
+  "blocked",
+  "disabled",
+  "deleted",
+] as const;
+export type TUserStatus = (typeof user_status)[number];

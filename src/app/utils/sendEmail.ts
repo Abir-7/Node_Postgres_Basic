@@ -5,7 +5,7 @@ import { appConfig } from "../config/appConfig";
 import { logger } from "./serverTools/logger";
 import { AppError } from "./serverTools/AppError";
 
-interface EmailOptions {
+interface IEmailOptions {
   to: string;
   subject: string;
   code?: string;
@@ -19,10 +19,10 @@ export async function sendEmail({
   to,
   subject,
   code,
-  project_name = "RedactorApp",
+  project_name,
   expire_time = 10,
-  purpose = "Verification", // default if not provided
-}: EmailOptions) {
+  purpose, // default if not provided
+}: IEmailOptions) {
   try {
     const transporter = nodemailer.createTransport({
       host: appConfig.email.host,
@@ -88,7 +88,7 @@ export async function sendEmail({
 <body>
   <div class="container">
     <h1>${purpose} Code</h1>
-    <p>Use the code below to ${purpose.toLowerCase()} for your <strong>${project_name}</strong> account.</p>
+    <p>Use the code below to ${purpose?.toLowerCase()} for your <strong>${project_name}</strong> account.</p>
     <div class="code">${code}</div>
     <p>This code expires in ${expire_time} minutes.</p>
 
