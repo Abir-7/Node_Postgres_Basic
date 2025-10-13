@@ -4,6 +4,8 @@ import { appConfig } from "./app/config/appConfig";
 import { logger } from "./app/utils/serverTools/logger";
 import { startConsumers } from "./app/lib/rabbitMq/worker";
 import { db } from "./app/db";
+import redis from "./app/lib/radis";
+import { initSocket } from "./app/lib/socket";
 
 // Create HTTP server
 const server = http.createServer(app);
@@ -16,6 +18,7 @@ server.listen(appConfig.server.port, async () => {
     );
     await db.execute("select 1").then(() => logger.info("Database connected."));
     startConsumers(); // start RabbitMQ consumers
+    initSocket(server);
   } catch (err) {
     logger.error("Error during server startup:", err);
     process.exit(1); // exit if startup fails
@@ -32,4 +35,13 @@ process.on("unhandledRejection", (reason: unknown, promise) => {
 process.on("uncaughtException", (err: Error) => {
   logger.error("UNCAUGHT EXCEPTION! Shutting down...", err);
   process.exit(1);
+});
+
+//redis
+redis.on("connect", () => {
+  logger.info("Redis connected");
+});
+
+redis.on("error", (err) => {
+  logger.error("Redis error:", err);
 });

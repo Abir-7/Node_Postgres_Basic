@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { logger } from "../../utils/serverTools/logger";
-import { getChannel } from "./rabbitMq";
+import { getChannel } from ".";
 
 type JobHandler = (data: any) => Promise<void>;
 
@@ -13,7 +13,7 @@ export const consumeQueue = async (
     const channel = await getChannel(queueName);
     channel.prefetch(prefetch);
 
-    logger.info(`[*] Waiting for messages in ${queueName}`);
+    logger.info(`Waiting for messages in ${queueName}`);
 
     channel.consume(
       queueName,

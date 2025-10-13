@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/explicit-module-boundary-types */
-import { getChannel } from "./rabbitMq";
+import { getChannel } from ".";
 import { logger } from "../../utils/serverTools/logger";
 
 export const publishJob = async (queueName: string, payload: object) => {
