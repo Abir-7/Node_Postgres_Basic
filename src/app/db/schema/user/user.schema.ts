@@ -5,7 +5,6 @@ import {
   varchar,
   text,
   boolean,
-  timestamp,
 } from "drizzle-orm/pg-core";
 import {
   user_roles,
@@ -14,6 +13,7 @@ import {
 import { relations } from "drizzle-orm";
 import { UserProfiles } from "./user_profiles.schema";
 import { UserAuthentications } from "./user_authentication.schema";
+import { timestamps } from "../../helper/columns.helpers";
 
 export const user_role = pgEnum("user_role", user_roles);
 
@@ -29,7 +29,7 @@ export const Users = pgTable("users", {
   need_to_reset_password: boolean("need_to_reset_password")
     .notNull()
     .default(false),
-  ...timestamp,
+  ...timestamps,
 });
 
 export const UsersRelations = relations(Users, ({ one, many }) => ({

@@ -1,6 +1,7 @@
 import { Request, Response, NextFunction } from "express";
 import { IAuthData, TUserRole } from "./auth.interface";
 import { AppError } from "../../utils/serverTools/AppError";
+import { jsonWebToken } from "../../utils/jwt/jwt";
 
 export const auth =
   (allowed_roles?: TUserRole[]) =>
@@ -16,6 +17,14 @@ export const auth =
     }
 
     try {
+      const decoded_data = jsonWebToken.decodeToken(token);
+
+      req.user = {
+        user_email: decoded_data.user_email,
+        user_id: decoded_data.user_id,
+        user_role: decoded_data.user_role,
+      };
+
       next();
     } catch (err) {
       return res.status(400).json({ message: "Invalid Basic token format" });

@@ -24,7 +24,7 @@ const updateUser = async (
 ) => {
   const [user] = await (trx || db)
     .update(Users)
-    .set(data)
+    .set({ ...data, updated_at: new Date() })
     .where(eq(Users.id, id))
     .returning();
   return user;

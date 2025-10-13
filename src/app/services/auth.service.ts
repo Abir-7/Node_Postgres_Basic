@@ -16,10 +16,11 @@ import isExpired from "../utils/helper/isExpired";
 import { UserRepository } from "../repositories/user.repo";
 import { logger } from "../utils/serverTools/logger";
 import { validateUserStatus } from "../utils/helper/validateUserStatus";
-import { comparePassword } from "../utils/helper/comparePassword";
+
 import { jsonWebToken } from "../utils/jwt/jwt";
 import { appConfig } from "../config/appConfig";
 import { getRemainingMinutes } from "../utils/helper/getRemainingMitutes";
+import comparePassword from "../utils/helper/comparePassword";
 
 const registerUser = async (
   userData: { email: string; password: string; role?: TUserRole },
@@ -168,7 +169,9 @@ const userLogin = async (data: {
     logger.info("No action take for mismatch. role not matched");
   }
   validateUserStatus(user_data.status);
-  await comparePassword(data.password, user_data.password_hash);
+  if (!(await comparePassword(data.password, user_data.password_hash))) {
+    throw new AppError("Password not matched.");
+  }
 
   const jwt_payload = {
     user_email: user_data.email,
@@ -176,7 +179,7 @@ const userLogin = async (data: {
     user_role: user_data.role,
   } as IAuthData;
 
-  const access_toekn = jsonWebToken.generateToken(
+  const access_token = jsonWebToken.generateToken(
     jwt_payload,
     appConfig.jwt.jwt_access_secret as string,
     appConfig.jwt.jwt_access_exprire
@@ -186,10 +189,10 @@ const userLogin = async (data: {
     appConfig.jwt.jwt_refresh_secret as string,
     appConfig.jwt.jwt_refresh_exprire
   );
-  const decoded_access_token = jsonWebToken.decodeToken(access_toekn);
+  const decoded_access_token = jsonWebToken.decodeToken(access_token);
   const decoded_refresh_token = jsonWebToken.decodeToken(refress_token);
   return {
-    access_toekn,
+    access_token,
     refress_token,
     user_id: user_data.id,
     access_token_expire: decoded_access_token.exp,
@@ -261,7 +264,10 @@ const forgotPassword = async (user_email: string) => {
     expire_time: "10 min",
     purpose: "verify",
   });
-  return { message: "A code has been sent to your email." };
+  return {
+    message: "A code has been sent to your email.",
+    user_id: user_data.id,
+  };
 };
 
 const verifyForgotPasswordReq = async (user_id: string, code: string) => {
@@ -346,7 +352,7 @@ const verifyForgotPasswordReq = async (user_id: string, code: string) => {
 const resetPassword = async (
   token: string,
   password_data: {
-    password: string;
+    new_password: string;
     confirm_password: string;
   }
 ) => {
@@ -379,19 +385,105 @@ const resetPassword = async (
     throw new AppError("Failed to update password.", 500);
   }
 
-  if (password_data.confirm_password !== password_data.password) {
+  if (password_data.confirm_password !== password_data.new_password) {
     throw new AppError("Password and Confirm password not matched", 500);
   }
+
+  const hashed_password = await getHashedPassword(password_data.new_password);
+
   try {
-    await Repository.transaction(async (trx) => {
-      await AuthRepository.setAuthenticationSuccess(user_auth_data.id, true);
-      await UserRepository.updateUser(user_data.id, {
-        need_to_reset_password: false,
-      });
+    return await Repository.transaction(async (trx) => {
+      await AuthRepository.setAuthenticationSuccess(
+        user_auth_data.id,
+        true,
+        trx
+      );
+      await UserRepository.updateUser(
+        user_data.id,
+        {
+          need_to_reset_password: false,
+          password_hash: hashed_password,
+          updated_at: new Date(),
+        },
+        trx
+      );
       return { message: "Password reset successfully." };
     });
   } catch (error) {
     throw new AppError("Failed to update password.", 400);
+  }
+};
+
+const updatePassword = async (
+  user_id: string,
+  password_data: {
+    old_password: string;
+    new_password: string;
+    confirm_password: string;
+  }
+) => {
+  const user_data = await UserRepository.findById(user_id);
+
+  if (!user_data) {
+    throw new AppError("Account not found.");
+  }
+
+  if (
+    !(await comparePassword(
+      password_data.old_password,
+      user_data.password_hash
+    ))
+  ) {
+    throw new AppError("Old password not matched.");
+  }
+  if (password_data.confirm_password !== password_data.new_password) {
+    throw new AppError("New password and confirm password not matched.");
+  }
+
+  const hashed_password = await getHashedPassword(password_data.new_password);
+  await UserRepository.updateUser(user_id, {
+    password_hash: hashed_password,
+    updated_at: new Date(),
+  });
+
+  return { message: "Password updated successfully" };
+};
+
+const getNewAccessToken = async (token: string) => {
+  try {
+    const decoded_data = jsonWebToken.verifyJwt(
+      token,
+      appConfig.jwt.jwt_refresh_secret as string
+    );
+    if (!decoded_data.user_id) {
+      throw new AppError("Please login again.");
+    }
+
+    const user_data = await UserRepository.findById(decoded_data.user_id);
+
+    if (!user_data) {
+      throw new AppError("Please login again.");
+    }
+
+    const payload: IAuthData = {
+      user_email: user_data.email,
+      user_id: user_data.id,
+      user_role: user_data.role,
+    };
+
+    const access_token = jsonWebToken.generateToken(
+      payload,
+      appConfig.jwt.jwt_access_secret as string,
+      appConfig.jwt.jwt_access_exprire
+    );
+
+    const decoded_access_token = jsonWebToken.decodeToken(access_token);
+    return {
+      access_token,
+      access_token_expire: decoded_access_token.exp,
+    };
+  } catch (error) {
+    throw new AppError("Please login again.");
   }
 };
 
@@ -403,4 +495,6 @@ export const AuthService = {
   forgotPassword,
   verifyForgotPasswordReq,
   resetPassword,
+  updatePassword,
+  getNewAccessToken,
 };

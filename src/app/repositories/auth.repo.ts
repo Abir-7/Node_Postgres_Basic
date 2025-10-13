@@ -89,7 +89,7 @@ const setAuthenticationSuccess = async (
 ) => {
   const [data] = await (trx || db)
     .update(UserAuthentications)
-    .set({ is_success: value })
+    .set({ is_success: value, updated_at: new Date() })
     .where(eq(UserAuthentications.id, authId))
     .returning();
   return data;
