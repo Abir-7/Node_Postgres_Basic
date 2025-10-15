@@ -2,9 +2,10 @@ import { Request, Response, NextFunction } from "express";
 import { IAuthData, TUserRole } from "./auth.interface";
 import { AppError } from "../../utils/serverTools/AppError";
 import { jsonWebToken } from "../../utils/jwt/jwt";
+import { UserRepository } from "../../repositories/user.repo";
 
 export const auth =
-  (allowed_roles?: TUserRole[]) =>
+  (allowed_roles: TUserRole[]) =>
   async (req: Request, res: Response, next: NextFunction) => {
     const token_with_bearer = req.headers.authorization as string;
     if (!token_with_bearer || !token_with_bearer.startsWith("Bearer")) {
@@ -18,6 +19,16 @@ export const auth =
 
     try {
       const decoded_data = jsonWebToken.decodeToken(token);
+
+      const user_data = await UserRepository.findById(decoded_data.user_id);
+
+      if (!user_data) {
+        throw new AppError("You are unauthorize", 401);
+      }
+
+      if (allowed_roles.includes(user_data.role)) {
+        throw new AppError("You are unauthorize", 401);
+      }
 
       req.user = {
         user_email: decoded_data.user_email,
